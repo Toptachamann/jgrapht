@@ -14,75 +14,96 @@ public class LeftRightPlanarityInspector<V, E> implements PlanarityTestingAlgori
     private Graph<V, E> graph;
     private List<Node> nodes;
     private List<Node> dfsRoots;
-    private Deque<ConflictPair> stack;
+    private Deque<ConflictPair> constraintStack;
+    private boolean tested = false;
+    private Embedding<V, E> embedding;
+    private boolean planar;
 
     public LeftRightPlanarityInspector(Graph<V, E> graph) {
         this.graph = Objects.requireNonNull(graph);
         this.nodes = new ArrayList<>();
         this.dfsRoots = new ArrayList<>();
-        this.stack = new ArrayDeque<>();
+        this.constraintStack = new ArrayDeque<>();
     }
 
+    @Override
     public boolean isPlanar() {
-        orient();
-        for (Node node : nodes) {
-            node.sortAdjacencyList();
-        }
-        if (DEBUG) {
-            printState();
-            System.out.println("Start testing phase\n");
-        }
-        for (Node root : dfsRoots) {
-            if (!testDfs(root)) {
-                return false;
-            }
-        }
-        //embed();
-        if (DEBUG) {
-            printState();
-        }
-        return true;
-    }
-
-    private void embed() {
-        for (Node node : nodes) {
-            for (Arc arc : node.arcs) {
-                arc.nestingDepth *= sign(arc);
-            }
-            node.sortAdjacencyList();
-        }
-        /*for (Node root : dfsRoots) {
-            embedDfs(root);
-        }*/
-    }
-
-    private int sign(Arc arc) {
-        if (arc.ref != null) {
-            arc.side = arc.side * sign(arc.ref);
-            arc.ref = null;
-        }
-        return arc.side;
-    }
-
-    private void embedDfs(Node current) {
-        for (Arc arc : current.arcs) {
-            Node target = arc.target;
-            if (arc == target.parentArc) {
-                target.embedded.set(0, arc.graphEdge);
-            } else {
-
-            }
-        }
+        return lazyTestPlanarity();
     }
 
     @Override
     public Embedding<V, E> getEmbedding() {
-        return null;
+        return lazyComputeEmbedding();
     }
 
     @Override
     public Graph<V, E> getKuratowskiSubdivision() {
+        lazyTestPlanarity();
+        if (planar) {
+            throw new IllegalArgumentException("Graph is planar");
+        }
         return null;
+    }
+
+    private boolean lazyTestPlanarity() {
+        if (!tested) {
+            tested = true;
+            orient();
+            sortAdjacencyLists(0, 2 * graph.vertexSet().size());
+            if (DEBUG) {
+                printState();
+                System.out.println("Start testing phase\n");
+            }
+            planar = true;
+            for (Node root : dfsRoots) {
+                if (!testDfs(root)) {
+                    planar = false;
+                    break;
+                }
+            }
+        }
+        return planar;
+    }
+
+    private Embedding<V, E> lazyComputeEmbedding() {
+        if (embedding == null) {
+            lazyTestPlanarity();
+            if (!planar) {
+                throw new IllegalArgumentException("Graph is not planar");
+            }
+            embed();
+            if (DEBUG) {
+                printState();
+            }
+            Map<V, List<E>> embeddingMap = new HashMap<>(graph.vertexSet().size());
+            for (Node node : nodes) {
+                embeddingMap.put(node.graphVertex, node.embedded);
+            }
+            embedding = new EmbeddingImpl<>(embeddingMap);
+        }
+        return embedding;
+    }
+
+    private void sortAdjacencyLists(int min, int max) {
+        int size = max - min + 1;
+        List<List<Arc>> arcs = new ArrayList<>(Collections.nCopies(size, null));
+        for (Node node : nodes) {
+            for (Arc arc : node.arcs) {
+                int pos = arc.nestingDepth - min;
+                if (arcs.get(pos) == null) {
+                    arcs.set(pos, new ArrayList<>());
+                }
+                arcs.get(pos).add(arc);
+            }
+            node.arcs.clear();
+        }
+        for (List<Arc> arcList : arcs) {
+            if (arcList != null) {
+                for (Arc arc : arcList) {
+                    arc.source.arcs.add(arc);
+                }
+            }
+        }
     }
 
     private void orient() {
@@ -92,115 +113,234 @@ public class LeftRightPlanarityInspector<V, E> implements PlanarityTestingAlgori
             nodes.add(node);
             nodeMapping.put(vertex, node);
         }
-        Set<E> visitedEdges = new HashSet<>();
         for (Node node : nodes) {
-            if (!node.visited) {
-                node.height = 0; // let's do it explicitly
+            if (node.height == -1) {
                 dfsRoots.add(node);
-                orientDfs(nodeMapping, visitedEdges, node);
+                orientDfs(nodeMapping, node);
             }
         }
-        nodes.forEach(n -> n.visited = false);
     }
 
-    private void orientDfs(Map<V, Node> nodeMapping, Set<E> visitedEdges, Node start) {
-        List<Pair<Node, E>> stack = new ArrayList<>();
-        for (E e : graph.edgesOf(start.graphVertex)) {
-            stack.add(new Pair<>(start, e));
+    private void orientDfs(Map<V, Node> nodeMapping, Node start) {
+        List<Pair<Node, Boolean>> stack = new ArrayList<>();
+        stack.add(new Pair<>(start, false));
+
+        while (!stack.isEmpty()) {
+            Pair<Node, Boolean> pair = stack.remove(stack.size() - 1);
+            Node current = pair.getFirst();
+            boolean backtrack = pair.getSecond();
+
+            if (backtrack) {
+                Arc parent = current.parentArc;
+                for (Arc arc : current.arcs) {
+                    arc.nestingDepth = 2 * arc.lowPoint;
+                    if (arc.lowPoint2 < current.height) {
+                        ++arc.nestingDepth;
+                    }
+                    if (parent != null) {
+
+                        if (parent.lowPoint > arc.lowPoint) {
+                            parent.lowPoint2 = Math.min(parent.lowPoint, arc.lowPoint2);
+                            parent.lowPoint = arc.lowPoint;
+                        } else if (parent.lowPoint < arc.lowPoint) {
+                            parent.lowPoint2 = Math.min(arc.lowPoint, parent.lowPoint2);
+                        } else {
+                            parent.lowPoint2 = Math.min(arc.lowPoint2, parent.lowPoint2);
+                        }
+                    }
+                }
+            } else {
+                if (current.height != -1) {
+                    continue; // visited in the previous branch
+                }
+                if (current.parentArc != null) {
+                    current.parentArc.source.arcs.add(current.parentArc);
+                    current.height = current.parentArc.source.height + 1;
+                } else {
+                    current.height = 0;
+                }
+                stack.add(new Pair<>(current, true));
+                for (E e : graph.edgesOf(current.graphVertex)) {
+                    Node opposite = nodeMapping.get(Graphs.getOppositeVertex(graph, e, current.graphVertex));
+                    if (opposite.height >= current.height || (current.parentArc != null && current.parentArc.source == opposite)) {
+                        continue;
+                    }
+                    Arc currentArc = new Arc(e, current, opposite);
+                    currentArc.lowPoint = currentArc.lowPoint2 = current.height;
+
+                    if (opposite.height == -1) {
+                        opposite.parentArc = currentArc;
+                        stack.add(new Pair<>(opposite, false));
+                    } else {
+                        currentArc.lowPoint = opposite.height;
+                        current.arcs.add(currentArc);
+                    }
+
+                }
+            }
+        }
+
+    }
+
+    private void embed() {
+        for (Node node : nodes) {
+            for (Arc arc : node.arcs) {
+                arc.nestingDepth *= sign(arc);
+            }
+        }
+        sortAdjacencyLists(-2 * graph.vertexSet().size(), 2 * graph.vertexSet().size());
+        if (DEBUG) {
+            printState();
+        }
+        for (Node node : nodes) {
+            for (Arc arc : node.arcs) {
+                if (arc.ref != null) {
+                    throw new NullPointerException();
+                }
+            }
+        }
+        for (Node root : dfsRoots) {
+            embedDfs(root);
+        }
+    }
+
+    private void embedDfs(Node start) {
+        List<Pair<Arc, Boolean>> stack = new ArrayList<>();
+        for (int i = start.arcs.size() - 1; i >= 0; --i) {
+            stack.add(Pair.of(start.arcs.get(i), false));
         }
 
         while (!stack.isEmpty()) {
-            E edge = stack.get(stack.size() - 1).getSecond();
-            if (visitedEdges.contains(edge)) {
-                continue;
-            }
-            visitedEdges.add(edge);
-            Node node = stack.get(stack.size() - 1).getFirst();
-            Node opposite = nodeMapping.get(Graphs.getOppositeVertex(graph, edge, node.graphVertex));
-            Arc arc = new Arc(edge, node, opposite);
+            Arc currentArc = stack.get(stack.size() - 1).getFirst();
+            boolean backtrack = stack.get(stack.size() - 1).getSecond();
+            stack.remove(stack.size() - 1);
 
-            for (E e : graph.edgesOf(current.graphVertex)) {
-                Node opposite = nodeMapping.get(Graphs.getOppositeVertex(graph, e, current.graphVertex));
+            Node target = currentArc.target;
+            Node current = currentArc.source;
 
-                visitedEdges.add(e);
-                Arc currentArc = new Arc(e, current, opposite);
-                current.arcs.add(currentArc);
-
-                currentArc.lowPoint = currentArc.lowPoint2 = current.height;
-                if (!opposite.visited) {
-                    opposite.parentArc = currentArc;
-                    opposite.height = current.height + 1;
-                    orientDfs(nodeMapping, visitedEdges, opposite);
+            if (currentArc == target.parentArc) {
+                if (backtrack) {
+                    for (Arc i = current.leftRef; i != null; i = i.ref) {
+                        current.embedded.add(i.graphEdge);
+                    }
                 } else {
-                    currentArc.lowPoint = opposite.height;
-                }
-
-                currentArc.nestingDepth = 2 * currentArc.lowPoint;
-                if (currentArc.lowPoint2 < current.height) {
-                    ++currentArc.nestingDepth;
-                }
-
-                Arc currentParent = current.parentArc;
-                if (currentParent != null) {
-                    if (currentParent.lowPoint > currentArc.lowPoint) {
-                        currentParent.lowPoint2 = Math.min(currentParent.lowPoint, currentArc.lowPoint2);
-                        currentParent.lowPoint = currentArc.lowPoint;
-                    } else if (currentParent.lowPoint < currentArc.lowPoint) {
-                        currentParent.lowPoint2 = Math.min(currentArc.lowPoint, currentParent.lowPoint2);
-                    } else {
-                        currentParent.lowPoint2 = Math.min(currentArc.lowPoint2, currentParent.lowPoint2);
+                    target.embedded.add(currentArc.graphEdge);
+                    current.leftRef = current.rightRef = currentArc;
+                    stack.add(Pair.of(currentArc, true));
+                    for (int i = target.arcs.size() - 1; i >= 0; i--) {
+                        stack.add(Pair.of(target.arcs.get(i), false));
                     }
                 }
+            } else {
+                if (currentArc.side == 1) {
+                    currentArc.ref = target.rightRef.ref;
+                    target.rightRef.ref = currentArc;
+                } else {
+                    currentArc.ref = target.leftRef;
+                    target.leftRef = currentArc;
+                }
+                current.embedded.add(currentArc.graphEdge);
             }
+
+
         }
+    }
+
+    private int sign(Arc arc) {
+        if (arc.ref == null) {
+            return arc.side;
+        }
+        Arc prev = null;
+        while (arc != null) {
+            Arc next = arc.ref;
+            arc.ref = prev;
+            prev = arc;
+            arc = next;
+        }
+        arc = prev;
+        prev = null;
+        while (arc != null) {
+            if (prev != null) {
+                arc.side = arc.side * prev.side;
+                prev.ref = null;
+            }
+            prev = arc;
+            arc = arc.ref;
+        }
+        prev.ref = null;
+        return prev.side;
 
     }
 
-    private boolean testDfs(Node currentNode) {
-        Arc parentArc = currentNode.parentArc;
-        for (Arc arc : currentNode.arcs) {
+    private boolean testDfs(Node start) {
+        List<Pair<Arc, Boolean>> stack = new ArrayList<>();
+        for (Arc arc : start.arcs) {
+            stack.add(Pair.of(arc, false));
+        }
+
+        while (!stack.isEmpty()) {
+            Arc currentArc = stack.get(stack.size() - 1).getFirst();
+            boolean backtrack = stack.get(stack.size() - 1).getSecond();
+            stack.remove(stack.size() - 1);
             if (DEBUG) {
-                System.out.printf("\nCurrent node: %s, traversing arc: %s\n\n", currentNode.graphVertex.toString(), arc);
+                System.out.println("Traversing arc: " + currentArc.toString() + ", phase: " + (backtrack ? "backtrack" : "forward"));
             }
 
-            arc.stackBottom = stack.peek();
-            if (arc == arc.target.parentArc) {
-                if (!testDfs(arc.target)) {
-                    return false;
-                }
-            } else {
-                arc.lowPointArc = arc;
-                ConflictPair toPush = new ConflictPair(new Interval(), new Interval(arc, arc));
-                stack.push(toPush);
+            Arc parentArc = currentArc.source.parentArc;
+            Node source = currentArc.source;
+
+            if (!backtrack) {
+                currentArc.stackBottom = constraintStack.peek();
+            }
+            if (currentArc != currentArc.target.parentArc) {
+                // it is a back arc
+                currentArc.lowPointArc = currentArc;
+                ConflictPair toPush = new ConflictPair(new Interval(), new Interval(currentArc, currentArc));
+                constraintStack.push(toPush);
                 if (DEBUG) {
                     System.out.printf("Encountered back edge, pushing conflict pair:\n%s\n", toPush.toString());
                     printStack();
                 }
+            } else if (!backtrack) {
+                // we are going forward
+                stack.add(Pair.of(currentArc, true));
+                for (int i = currentArc.target.arcs.size() - 1; i >= 0; i--) {
+                    stack.add(Pair.of(currentArc.target.arcs.get(i), false));
+                }
+                continue;
             }
-            if (arc.lowPoint < currentNode.height) {
-                if (arc == currentNode.arcs.get(0)) {
-                    parentArc.lowPointArc = arc.lowPointArc;
-                } else {
-                    if (!addConstraintsForArc(arc, parentArc)) {
-                        // failed to add constraints, graph is not planar
-                        return false;
+
+            // here backtracking begins
+            if (currentArc.lowPoint < source.height) {
+                // current arc has a return edge
+                if (currentArc == source.arcs.get(0)) {
+                    parentArc.lowPointArc = currentArc.lowPointArc;
+                } else if (!addConstraintsForArc(currentArc, parentArc)) {
+                    // failed to add constraints, graph is not planar
+                    return false;
+                }
+            }
+            if (currentArc == source.arcs.get(source.arcs.size() - 1)) {
+                // finished all outgoing arcs of the current source node
+                if (parentArc != null) {
+                    Node parentSource = parentArc.source;
+                    trimBackEdges(parentSource);
+                    if (parentArc.lowPoint < parentSource.height) {
+                        ConflictPair conflictPair = constraintStack.peek();
+
+                        assert conflictPair != null;
+
+                        Arc leftHigh = conflictPair.left.high;
+                        Arc rightHigh = conflictPair.right.high;
+                        if (leftHigh != null && (rightHigh == null || leftHigh.lowPoint > rightHigh.lowPoint)) {
+                            parentArc.ref = leftHigh;
+                        } else {
+                            parentArc.ref = rightHigh;
+                        }
                     }
                 }
             }
-        }
-        if (parentArc != null) {
-            Node source = parentArc.source;
-            trimBackEdges(source);
-            if (parentArc.lowPoint < source.height) {
-                ConflictPair conflictPair = stack.peek();
-                Arc leftHigh = conflictPair.left.high;
-                Arc rightHigh = conflictPair.right.high;
-                if (leftHigh != null && (rightHigh == null || leftHigh.lowPoint > rightHigh.lowPoint)) {
-                    parentArc.ref = leftHigh;
-                } else {
-                    parentArc.ref = rightHigh;
-                }
-            }
+
         }
         return true;
     }
@@ -216,7 +356,7 @@ public class LeftRightPlanarityInspector<V, E> implements PlanarityTestingAlgori
 
         // merging return edges of the current arc into the right interval
         do {
-            ConflictPair currentPair = stack.pop();
+            ConflictPair currentPair = constraintStack.pop();
             if (!currentPair.left.isEmpty()) {
                 currentPair.swap();
             }
@@ -233,23 +373,23 @@ public class LeftRightPlanarityInspector<V, E> implements PlanarityTestingAlgori
             } else {
                 currentPair.right.low.ref = parent.lowPointArc;
             }
-        } while (stack.peek() != currentArc.stackBottom);
+        } while (constraintStack.peek() != currentArc.stackBottom);
 
         if (DEBUG) {
             System.out.printf("Merged into right interval:\n%s\n", merged.toString());
         }
 
         // merging conflicting return edges into the left interval
-        assert !stack.isEmpty();
+        assert !constraintStack.isEmpty();
         if (DEBUG) {
-            if (conflicting(stack.peek().left, currentArc) || conflicting(stack.peek().right, currentArc)) {
+            if (conflicting(constraintStack.peek().left, currentArc) || conflicting(constraintStack.peek().right, currentArc)) {
                 System.out.println("There are conflicting constraints\n");
             } else {
                 System.out.println("There are no conflicting constraints\n");
             }
         }
-        while (conflicting(stack.peek().left, currentArc) || conflicting(stack.peek().right, currentArc)) {
-            ConflictPair currentPair = stack.pop();
+        while (conflicting(constraintStack.peek().left, currentArc) || conflicting(constraintStack.peek().right, currentArc)) {
+            ConflictPair currentPair = constraintStack.pop();
             if (conflicting(currentPair.right, currentArc)) {
                 currentPair.swap();
                 if (DEBUG) {
@@ -271,7 +411,7 @@ public class LeftRightPlanarityInspector<V, E> implements PlanarityTestingAlgori
             merged.left.low = currentPair.left.low;
         }
         if (!merged.isEmpty()) {
-            stack.push(merged);
+            constraintStack.push(merged);
             if (DEBUG) {
                 System.out.printf("Merged pair:\n%s\n", merged.toString());
                 printStack();
@@ -285,8 +425,8 @@ public class LeftRightPlanarityInspector<V, E> implements PlanarityTestingAlgori
             System.out.printf("Trimming edges for node: %s\n\n", node.toString());
             printStack();
         }
-        while (!stack.isEmpty() && lowest(stack.peek()) == node.height) {
-            ConflictPair pair = stack.pop();
+        while (!constraintStack.isEmpty() && lowest(constraintStack.peek()) == node.height) {
+            ConflictPair pair = constraintStack.pop();
             if (!pair.left.isEmpty()) {
                 pair.left.low.side = -1;
             }
@@ -294,8 +434,8 @@ public class LeftRightPlanarityInspector<V, E> implements PlanarityTestingAlgori
                 System.out.printf("Popped pair: %s\n\n", pair.toString());
             }
         }
-        if (!stack.isEmpty()) {
-            ConflictPair pair = stack.pop();
+        if (!constraintStack.isEmpty()) {
+            ConflictPair pair = constraintStack.pop();
             if (DEBUG) {
                 System.out.printf("Trimming conflict pair:\n%s\n\n", pair.toString());
             }
@@ -322,7 +462,7 @@ public class LeftRightPlanarityInspector<V, E> implements PlanarityTestingAlgori
                 pair.right.low.side = -1;
                 pair.right.low = null;
             }
-            stack.push(pair);
+            constraintStack.push(pair);
         }
         if (DEBUG) {
             System.out.println("Trimmed back edges");
@@ -361,10 +501,10 @@ public class LeftRightPlanarityInspector<V, E> implements PlanarityTestingAlgori
 
     private void printStack() {
         List<ConflictPair> list = new ArrayList<>();
-        for (ConflictPair pair : stack) {
+        for (ConflictPair pair : constraintStack) {
             list.add(pair);
         }
-        System.out.println("Printing stack:");
+        System.out.println("Printing constraintStack:");
         for (int i = 0; i < list.size(); i++) {
             System.out.println(list.get(i));
         }
@@ -375,17 +515,16 @@ public class LeftRightPlanarityInspector<V, E> implements PlanarityTestingAlgori
         Arc parentArc;
         V graphVertex;
         List<Arc> arcs;
-        int height;
-        int leftRef;
-        int rightRef;
-        boolean visited;
         List<E> embedded;
+        int height;
+        Arc leftRef;
+        Arc rightRef;
 
         Node(V graphVertex, int degree) {
             this.graphVertex = graphVertex;
-            this.embedded = new ArrayList<>(Collections.nCopies(degree, null));
-            this.rightRef = degree - 1;
             this.arcs = new ArrayList<>();
+            this.embedded = new ArrayList<>(degree);
+            this.height = -1;
         }
 
         @Override
@@ -405,37 +544,6 @@ public class LeftRightPlanarityInspector<V, E> implements PlanarityTestingAlgori
             return builder.toString();
         }
 
-        void sortAdjacencyList() {
-            if (arcs.isEmpty()) {
-                return;
-            }
-            /*int min = Integer.MAX_VALUE;
-            int max = Integer.MIN_VALUE;
-            for (Arc arc : arcs) {
-                min = Math.min(min, arc.nestingDepth);
-                max = Math.max(max, arc.nestingDepth);
-            }
-            int size = max - min + 1;*/
-            int size = 2 * graph.vertexSet().size();
-            List<List<Arc>> countList = new ArrayList<>(Collections.nCopies(size, null));
-            /*for (int i = 0; i < size; i++) {
-                countList.add(new ArrayList<>());
-            }*/
-            for (Arc arc : arcs) {
-//                countList.get(arc.nestingDepth - min).add(arc);
-                if (countList.get(arc.nestingDepth) == null) {
-                    countList.set(arc.nestingDepth, new ArrayList<>());
-                }
-                countList.get(arc.nestingDepth).add(arc);
-            }
-            List<Arc> sorted = new ArrayList<>(arcs.size());
-            for (List<Arc> arcList : countList) {
-                if (arcList != null) {
-                    sorted.addAll(arcList);
-                }
-            }
-            arcs = sorted;
-        }
     }
 
     private class Arc {
@@ -461,7 +569,7 @@ public class LeftRightPlanarityInspector<V, E> implements PlanarityTestingAlgori
         public String toString(boolean full) {
             String res = toString();
             if (full) {
-                res += String.format(": lowpoint = %d, lowpoint2 = %d, nesting_depth = %d, side = %d", lowPoint, lowPoint2, nestingDepth, side);
+                res += String.format(": lowpoint = %d, lowpoint2 = %d, nesting_depth = %d, side = %d, ref = %s", lowPoint, lowPoint2, nestingDepth, side, String.valueOf(ref));
             }
             return res;
         }

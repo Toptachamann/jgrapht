@@ -28,5 +28,14 @@ public interface PlanarityTestingAlgorithm<V, E> {
         public List<E> getEdgesAround(V vertex) {
             return embeddingMap.get(vertex);
         }
+
+        @Override
+        public String toString() {
+            StringBuilder builder = new StringBuilder("[");
+            for (Map.Entry<V, List<E>> entry : embeddingMap.entrySet()) {
+                builder.append(entry.getKey().toString()).append(" -> ").append(entry.getValue().toString()).append(", ");
+            }
+            return builder.append("]").toString();
+        }
     }
 }
