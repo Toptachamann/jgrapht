@@ -10,13 +10,14 @@ import java.util.stream.Collectors;
 
 public class LeftRightPlanarityInspector<V, E> implements PlanarityTestingAlgorithm<V, E> {
 
-    private static final boolean DEBUG = false;
+    private static final boolean DEBUG = true;
     private Graph<V, E> graph;
     private List<Node> nodes;
     private List<Node> dfsRoots;
     private Deque<ConflictPair> constraintStack;
     private boolean tested = false;
     private Embedding<V, E> embedding;
+    private Graph<V, E> subdivision;
     private boolean planar;
 
     public LeftRightPlanarityInspector(Graph<V, E> graph) {
@@ -24,6 +25,72 @@ public class LeftRightPlanarityInspector<V, E> implements PlanarityTestingAlgori
         this.nodes = new ArrayList<>();
         this.dfsRoots = new ArrayList<>();
         this.constraintStack = new ArrayDeque<>();
+    }
+
+    public static <V, E> boolean isK33Subdivision(Graph<V, E> graph) {
+        List<V> degree3 = new ArrayList<>();
+        for (V vertex : graph.vertexSet()) {
+            if (graph.degreeOf(vertex) == 3) {
+                degree3.add(vertex);
+            } else if (graph.degreeOf(vertex) != 2) {
+                return false;
+            }
+        }
+        if (degree3.size() != 6) {
+            return false;
+        }
+        V vertex = degree3.remove(degree3.size() - 1);
+        Set<V> reachable = reachableWithDegree(graph, vertex, 3);
+        if (reachable.size() != 3) {
+            return false;
+        }
+        degree3.removeAll(reachable);
+        return reachable.equals(reachableWithDegree(graph, degree3.get(0), 3))
+                && reachable.equals(reachableWithDegree(graph, degree3.get(1), 3));
+    }
+
+    public static <V, E> boolean isK5Subdivision(Graph<V, E> graph) {
+        Set<V> degree5 = new HashSet<>();
+        for (V vertex : graph.vertexSet()) {
+            if (graph.degreeOf(vertex) == 5) {
+                degree5.add(vertex);
+            } else if (graph.degreeOf(vertex) != 2) {
+                return false;
+            }
+        }
+        if (degree5.size() != 5) {
+            return false;
+        }
+        for (V vertex : degree5) {
+            Set<V> reachable = reachableWithDegree(graph, vertex, 5);
+            if (reachable.size() != 4 || !degree5.containsAll(reachable) || reachable.contains(vertex)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static <V, E> Set<V> reachableWithDegree(Graph<V, E> graph, V vertex, int degree) {
+        Set<V> visited = new HashSet<>();
+        Set<V> reachable = new HashSet<>();
+        Queue<V> queue = new ArrayDeque<>();
+        queue.add(vertex);
+        while (!queue.isEmpty()) {
+            V current = queue.poll();
+            visited.add(current);
+            for (E e : graph.edgesOf(current)) {
+                V opposite = Graphs.getOppositeVertex(graph, e, current);
+                if (visited.contains(opposite)) {
+                    continue;
+                }
+                if (graph.degreeOf(opposite) == degree) {
+                    reachable.add(opposite);
+                } else {
+                    queue.add(opposite);
+                }
+            }
+        }
+        return reachable;
     }
 
     @Override
@@ -345,6 +412,95 @@ public class LeftRightPlanarityInspector<V, E> implements PlanarityTestingAlgori
         return true;
     }
 
+    private Pair<Arc, Arc> forkArc(Arc first, Arc second) {
+        Arc current = first, next = second;
+        Arc result, stop;
+        while (true) {
+            if (current.visited) {
+                result = current;
+                stop = next;
+                break;
+            }
+            if (current.source.parentArc == null) {
+                while (!next.visited) {
+                    next = next.source.parentArc;
+                }
+                result = next;
+                stop = current;
+                break;
+            }
+            current.visited = true;
+            Arc t = next;
+            next = current.source.parentArc;
+            current = t;
+
+        }
+        Arc leftFork = unvisit(first, result);
+        Arc rightFork = unvisit(second, result);
+        unvisit(result, stop);
+        return new Pair<>(leftFork, rightFork);
+    }
+
+    private Arc unvisit(Arc start, Arc stop) {
+        Arc i;
+        for (i = start; i.source.parentArc != stop; i = i.source.parentArc) {
+            i.visited = false;
+        }
+        i.visited = false;
+        i.source.parentArc.visited = false;
+        return i;
+    }
+
+    private void addFundamentalCycle(Set<E> edges, Arc backArc) {
+        Node stop = backArc.target;
+        Arc current = backArc;
+        while (current.source != stop) {
+            edges.add(current.graphEdge);
+            current = current.source.parentArc;
+        }
+        edges.add(current.graphEdge);
+    }
+
+    private void removePath(Set<E> edges, Node high, Node low) {
+        for (Arc i = high.parentArc; i != low.parentArc; i = i.source.parentArc) {
+            edges.remove(i.graphEdge);
+        }
+    }
+
+    private void extractKuratowskiSubdivision(Arc forkArc, Arc failedArc, boolean previousConstraints) {
+        ConflictPair conflictPair = constraintStack.peek();
+        Set<E> edges = new HashSet<>();
+        Arc leftLow = conflictPair.left.low;
+        Arc rightLow = conflictPair.right.low;
+        if (previousConstraints) {
+
+        } else {
+            Pair<Arc, Arc> fork = forkArc(leftLow, rightLow);
+            Arc leftFork = fork.getFirst();
+            Arc rightFork = fork.getSecond();
+            if (leftFork.lowPointArc.lowPoint < rightFork.lowPointArc.lowPoint) {
+                assert leftFork.target.height > leftFork.source.height;
+                addFundamentalCycle(edges, forkArc.lowPointArc);
+                if (leftLow.lowPoint > rightLow.lowPoint) {
+                    // extracting K_{3, 3}
+                    addFundamentalCycle(edges, leftLow);
+                    addFundamentalCycle(edges, rightLow);
+                    addFundamentalCycle(edges, leftFork.lowPointArc);
+                } else if (leftLow.lowPoint == rightLow.lowPoint) {
+                    // extracting K_{3, 3}
+                    addFundamentalCycle(edges, leftLow);
+                    addFundamentalCycle(edges, rightLow);
+                    addFundamentalCycle(edges, leftFork.lowPointArc);
+                    addFundamentalCycle(edges, rightFork.lowPointArc);
+                    removePath(edges, leftLow.target, leftFork.lowPointArc.target);
+                } else {
+
+                }
+            }
+        }
+
+    }
+
     private boolean addConstraintsForArc(Arc currentArc, Arc parent) {
         if (DEBUG) {
             System.out.printf("Adding constraints for arc: %s\n\n", currentArc.toString());
@@ -361,6 +517,8 @@ public class LeftRightPlanarityInspector<V, E> implements PlanarityTestingAlgori
                 currentPair.swap();
             }
             if (!currentPair.left.isEmpty()) {
+                System.out.println("Top conflict pair:");
+                System.out.println(currentPair);
                 return false; // graph is not planar
             }
             if (currentPair.right.low.lowPoint > parent.lowPoint) {
@@ -397,6 +555,8 @@ public class LeftRightPlanarityInspector<V, E> implements PlanarityTestingAlgori
                 }
             }
             if (conflicting(currentPair.right, currentArc)) {
+                System.out.println("Top conflict pair:");
+                System.out.println(currentPair);
                 return false; // graph is not planar
             }
             merged.right.low.ref = currentPair.right.high;
@@ -554,6 +714,7 @@ public class LeftRightPlanarityInspector<V, E> implements PlanarityTestingAlgori
         int lowPoint;
         int lowPoint2;
         int nestingDepth;
+        boolean visited;
         Arc ref;
         Arc lowPointArc;
         ConflictPair stackBottom;
