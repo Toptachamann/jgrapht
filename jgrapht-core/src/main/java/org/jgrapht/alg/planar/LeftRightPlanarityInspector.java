@@ -4,27 +4,34 @@ import org.jgrapht.Graph;
 import org.jgrapht.Graphs;
 import org.jgrapht.alg.interfaces.PlanarityTestingAlgorithm;
 import org.jgrapht.alg.util.Pair;
+import org.jgrapht.graph.AsSubgraph;
+import org.jgrapht.graph.DefaultEdge;
 
 import java.util.*;
 import java.util.stream.Collectors;
 
-public class LeftRightPlanarityInspector<V, E> implements PlanarityTestingAlgorithm<V, E> {
+public class LeftRightPlanarityInspector implements PlanarityTestingAlgorithm {
 
     private static final boolean DEBUG = true;
-    private Graph<V, E> graph;
+    private Graph<Integer, DefaultEdge> graph;
     private List<Node> nodes;
     private List<Node> dfsRoots;
     private Deque<ConflictPair> constraintStack;
     private boolean tested = false;
-    private Embedding<V, E> embedding;
-    private Graph<V, E> subdivision;
+    private Embedding<Integer, DefaultEdge> embedding;
+    private Graph<Integer, DefaultEdge> subdivision;
+    private Map<Integer, List<DefaultEdge>> debugGraph;
     private boolean planar;
 
-    public LeftRightPlanarityInspector(Graph<V, E> graph) {
+    public LeftRightPlanarityInspector(Graph<Integer, DefaultEdge> graph) {
         this.graph = Objects.requireNonNull(graph);
         this.nodes = new ArrayList<>();
         this.dfsRoots = new ArrayList<>();
         this.constraintStack = new ArrayDeque<>();
+    }
+
+    public static <V, E> boolean isKuratowskiSubdivision(Graph<V, E> graph) {
+        return isK33Subdivision(graph) || isK5Subdivision(graph);
     }
 
     public static <V, E> boolean isK33Subdivision(Graph<V, E> graph) {
@@ -52,9 +59,10 @@ public class LeftRightPlanarityInspector<V, E> implements PlanarityTestingAlgori
     public static <V, E> boolean isK5Subdivision(Graph<V, E> graph) {
         Set<V> degree5 = new HashSet<>();
         for (V vertex : graph.vertexSet()) {
-            if (graph.degreeOf(vertex) == 5) {
+            int degree = graph.degreeOf(vertex);
+            if (degree == 4) {
                 degree5.add(vertex);
-            } else if (graph.degreeOf(vertex) != 2) {
+            } else if (degree != 2) {
                 return false;
             }
         }
@@ -62,7 +70,7 @@ public class LeftRightPlanarityInspector<V, E> implements PlanarityTestingAlgori
             return false;
         }
         for (V vertex : degree5) {
-            Set<V> reachable = reachableWithDegree(graph, vertex, 5);
+            Set<V> reachable = reachableWithDegree(graph, vertex, 4);
             if (reachable.size() != 4 || !degree5.containsAll(reachable) || reachable.contains(vertex)) {
                 return false;
             }
@@ -99,12 +107,12 @@ public class LeftRightPlanarityInspector<V, E> implements PlanarityTestingAlgori
     }
 
     @Override
-    public Embedding<V, E> getEmbedding() {
+    public Embedding<Integer, DefaultEdge> getEmbedding() {
         return lazyComputeEmbedding();
     }
 
     @Override
-    public Graph<V, E> getKuratowskiSubdivision() {
+    public Graph<Integer, DefaultEdge> getKuratowskiSubdivision() {
         lazyTestPlanarity();
         if (planar) {
             throw new IllegalArgumentException("Graph is planar");
@@ -132,7 +140,7 @@ public class LeftRightPlanarityInspector<V, E> implements PlanarityTestingAlgori
         return planar;
     }
 
-    private Embedding<V, E> lazyComputeEmbedding() {
+    private Embedding<Integer, DefaultEdge> lazyComputeEmbedding() {
         if (embedding == null) {
             lazyTestPlanarity();
             if (!planar) {
@@ -142,7 +150,7 @@ public class LeftRightPlanarityInspector<V, E> implements PlanarityTestingAlgori
             if (DEBUG) {
                 printState();
             }
-            Map<V, List<E>> embeddingMap = new HashMap<>(graph.vertexSet().size());
+            Map<Integer, List<DefaultEdge>> embeddingMap = new HashMap<>(graph.vertexSet().size());
             for (Node node : nodes) {
                 embeddingMap.put(node.graphVertex, node.embedded);
             }
@@ -174,8 +182,12 @@ public class LeftRightPlanarityInspector<V, E> implements PlanarityTestingAlgori
     }
 
     private void orient() {
-        Map<V, Node> nodeMapping = new HashMap<>(graph.vertexSet().size());
-        for (V vertex : graph.vertexSet()) {
+        /*Map<Integer, Node> nodeMapping = initDebug();
+        Node node1 = nodeMapping.get(0);
+        dfsRoots.add(node1);
+        orientDfs(nodeMapping, node1);*/
+        Map<Integer, Node> nodeMapping = new HashMap<>(graph.vertexSet().size());
+        for (Integer vertex : graph.vertexSet()) {
             Node node = new Node(vertex, graph.degreeOf(vertex));
             nodes.add(node);
             nodeMapping.put(vertex, node);
@@ -188,7 +200,49 @@ public class LeftRightPlanarityInspector<V, E> implements PlanarityTestingAlgori
         }
     }
 
-    private void orientDfs(Map<V, Node> nodeMapping, Node start) {
+    private Map<Integer, Node> initDebug() {
+        Node node0 = new Node(0, 0);
+        Node node1 = new Node(1, 0);
+        Node node2 = new Node(2, 0);
+        Node node3 = new Node(3, 0);
+        Node node4 = new Node(4, 0);
+        Node node5 = new Node(5, 0);
+        Node node6 = new Node(6, 0);
+
+        nodes = new ArrayList<>(Arrays.asList(node0, node1, node2, node3, node4, node5, node6));
+        Map<Integer, Node> nodeMapping = new HashMap<>();
+        nodeMapping.put(0, node0);
+        nodeMapping.put(1, node1);
+        nodeMapping.put(2, node2);
+        nodeMapping.put(3, node3);
+        nodeMapping.put(4, node4);
+        nodeMapping.put(5, node5);
+        nodeMapping.put(6, node6);
+
+        DefaultEdge e01 = graph.getEdge(0, 1);
+        DefaultEdge e12 = graph.getEdge(1, 2);
+        DefaultEdge e23 = graph.getEdge(2, 3);
+        DefaultEdge e34 = graph.getEdge(3, 4);
+        DefaultEdge e45 = graph.getEdge(4, 5);
+        DefaultEdge e56 = graph.getEdge(5, 6);
+        DefaultEdge e64 = graph.getEdge(6, 4);
+        DefaultEdge e61 = graph.getEdge(6, 1);
+        DefaultEdge e50 = graph.getEdge(5, 0);
+        DefaultEdge e52 = graph.getEdge(5, 2);
+        DefaultEdge e30 = graph.getEdge(3, 0);
+
+        debugGraph = new HashMap<>();
+        debugGraph.put(0, Arrays.asList(e50, e30, e01));
+        debugGraph.put(1, Arrays.asList(e61, e01, e12));
+        debugGraph.put(2, Arrays.asList(e12, e52, e23));
+        debugGraph.put(3, Arrays.asList(e23, e30, e34));
+        debugGraph.put(4, Arrays.asList(e34, e64, e45));
+        debugGraph.put(5, Arrays.asList(e45, e50, e52, e56));
+        debugGraph.put(6, Arrays.asList(e56, e64, e61));
+        return nodeMapping;
+    }
+
+    private void orientDfs(Map<Integer, Node> nodeMapping, Node start) {
         List<Pair<Node, Boolean>> stack = new ArrayList<>();
         stack.add(new Pair<>(start, false));
 
@@ -205,7 +259,6 @@ public class LeftRightPlanarityInspector<V, E> implements PlanarityTestingAlgori
                         ++arc.nestingDepth;
                     }
                     if (parent != null) {
-
                         if (parent.lowPoint > arc.lowPoint) {
                             parent.lowPoint2 = Math.min(parent.lowPoint, arc.lowPoint2);
                             parent.lowPoint = arc.lowPoint;
@@ -227,7 +280,8 @@ public class LeftRightPlanarityInspector<V, E> implements PlanarityTestingAlgori
                     current.height = 0;
                 }
                 stack.add(new Pair<>(current, true));
-                for (E e : graph.edgesOf(current.graphVertex)) {
+                // TODO fix
+                for (DefaultEdge e : graph.edgesOf(current.graphVertex)) {
                     Node opposite = nodeMapping.get(Graphs.getOppositeVertex(graph, e, current.graphVertex));
                     if (opposite.height >= current.height || (current.parentArc != null && current.parentArc.source == opposite)) {
                         continue;
@@ -438,7 +492,16 @@ public class LeftRightPlanarityInspector<V, E> implements PlanarityTestingAlgori
         Arc leftFork = unvisit(first, result);
         Arc rightFork = unvisit(second, result);
         unvisit(result, stop);
+        for (Node node : nodes) {
+            for (Arc arc : node.arcs) {
+                assert !arc.visited;
+            }
+        }
         return new Pair<>(leftFork, rightFork);
+    }
+
+    private Node forkNode(Arc first, Arc second) {
+        return forkArc(first, second).getFirst().source;
     }
 
     private Arc unvisit(Arc start, Arc stop) {
@@ -451,54 +514,430 @@ public class LeftRightPlanarityInspector<V, E> implements PlanarityTestingAlgori
         return i;
     }
 
-    private void addFundamentalCycle(Set<E> edges, Arc backArc) {
+    private void addFundamentalCycle(Set<Arc> edges, Arc... backArcs) {
+        for (Arc backArc : backArcs) {
+            Node stop = backArc.target;
+            Arc current = backArc;
+            while (current.source != stop) {
+                edges.add(current);
+                current = current.source.parentArc;
+            }
+            edges.add(current);
+        }
+    }
+
+    private void addNodesFromFunamentalCycle(Set<Node> nodes, Arc backArc) {
+        nodes.add(backArc.target);
+        Node currentNode = backArc.source;
+        while (currentNode != backArc.target) {
+            nodes.add(currentNode);
+            currentNode = currentNode.parentArc.source;
+        }
+    }
+
+    private void removeFundamentalCycle(Set<Arc> edges, Arc backArc) {
         Node stop = backArc.target;
         Arc current = backArc;
         while (current.source != stop) {
-            edges.add(current.graphEdge);
+            edges.remove(current);
             current = current.source.parentArc;
         }
-        edges.add(current.graphEdge);
+        edges.add(current);
     }
 
-    private void removePath(Set<E> edges, Node high, Node low) {
+    private void removePath(Set<Arc> edges, Node high, Node low) {
         for (Arc i = high.parentArc; i != low.parentArc; i = i.source.parentArc) {
-            edges.remove(i.graphEdge);
+            edges.remove(i);
         }
     }
 
-    private void extractKuratowskiSubdivision(Arc forkArc, Arc failedArc, boolean previousConstraints) {
-        ConflictPair conflictPair = constraintStack.peek();
-        Set<E> edges = new HashSet<>();
-        Arc leftLow = conflictPair.left.low;
-        Arc rightLow = conflictPair.right.low;
-        if (previousConstraints) {
+    private Arc searchPath(Set<Node> forbiddenNodes, Node from, Node to, int low, int high) {
+        for (Node current = from; current != to; current = current.parentArc.source) {
+            Arc res = searchPath(forbiddenNodes, current, low, high);
+            if (res != null) {
+                return res;
+            }
+        }
+        return null;
+    }
 
-        } else {
-            Pair<Arc, Arc> fork = forkArc(leftLow, rightLow);
-            Arc leftFork = fork.getFirst();
-            Arc rightFork = fork.getSecond();
-            if (leftFork.lowPointArc.lowPoint < rightFork.lowPointArc.lowPoint) {
-                assert leftFork.target.height > leftFork.source.height;
-                addFundamentalCycle(edges, forkArc.lowPointArc);
-                if (leftLow.lowPoint > rightLow.lowPoint) {
-                    // extracting K_{3, 3}
-                    addFundamentalCycle(edges, leftLow);
-                    addFundamentalCycle(edges, rightLow);
-                    addFundamentalCycle(edges, leftFork.lowPointArc);
-                } else if (leftLow.lowPoint == rightLow.lowPoint) {
-                    // extracting K_{3, 3}
-                    addFundamentalCycle(edges, leftLow);
-                    addFundamentalCycle(edges, rightLow);
-                    addFundamentalCycle(edges, leftFork.lowPointArc);
-                    addFundamentalCycle(edges, rightFork.lowPointArc);
-                    removePath(edges, leftLow.target, leftFork.lowPointArc.target);
-                } else {
 
+    private Arc searchPath(Set<Node> forbiddenNodes, Node current, int low, int high) {
+        for (Arc arc : current.arcs) {
+            if (arc.target.height < high && arc.target.height > low) {
+                return arc;
+            } else if (!forbiddenNodes.contains(arc.target) && arc.isTreeArc()) {
+                Arc res = searchPath(forbiddenNodes, arc.target, low, high);
+                if (res != null) {
+                    return res;
                 }
             }
         }
+        return null;
+    }
 
+    private Node lowest(Node... searchNodes) {
+        Node res = null;
+        int minHeight = Integer.MAX_VALUE;
+        for (Node node : searchNodes) {
+            if (minHeight > node.height) {
+                res = node;
+                minHeight = node.height;
+            }
+        }
+        return res;
+    }
+
+    private Node highest(Node... searchNodes) {
+        Node res = null;
+        int minHeight = Integer.MIN_VALUE;
+        for (Node node : searchNodes) {
+            if (minHeight < node.height) {
+                res = node;
+                minHeight = node.height;
+            }
+        }
+        return res;
+    }
+
+    private Set<Node> getForbidden(Arc... arcs) {
+        Set<Node> res = new HashSet<>();
+        for (Arc arc : arcs) {
+            addNodesFromFunamentalCycle(res, arc);
+        }
+        return res;
+    }
+
+    private void extractKuratowskiSubdivision(ConflictPair conflictPair, Arc failedArcSource, boolean previousConstraints) {
+        if (DEBUG) {
+            System.out.println("Extracting Kuratowski subdivision");
+        }
+        Set<Arc> edges = new HashSet<>();
+        addFundamentalCycle(edges, failedArcSource);
+        Arc leftLow = conflictPair.left.low;
+        Arc rightLow = conflictPair.right.low;
+        if (previousConstraints) {
+            if (DEBUG)
+                System.out.println("Previous constraints, return");
+            return;
+        } else {
+            Arc failedArc = failedArcSource.lowPointArc;
+            Node failedNode = failedArcSource.source;
+            Pair<Arc, Arc> fork = forkArc(leftLow, rightLow);
+            Arc leftFork = fork.getFirst();
+            Arc rightFork = fork.getSecond();
+            Node forkNode = leftFork.source;
+            if (leftFork.lowPointArc.target.isHigherThan(rightFork.lowPointArc.target) || !leftFork.isTreeArc()) {
+                if (DEBUG)
+                    System.out.println("Swapping the sides");
+                Arc t = leftFork;
+                leftFork = rightFork;
+                rightFork = t;
+                t = leftLow;
+                leftLow = rightLow;
+                rightLow = t;
+                conflictPair.swap();
+            }
+            assert leftFork.isTreeArc();
+            if (DEBUG) {
+                System.out.printf("Failed arc source = %s, failed arc low point arc = %s\n", failedArcSource.toString(), failedArc.toString());
+                System.out.printf("Left low = %s, right low = %s\n", leftLow.toString(), rightLow.toString());
+                System.out.printf("Left fork = %s, right fork = %s\n", leftFork.toString(), rightFork.toString());
+                System.out.printf("Left fork low point arc = %s\n", leftFork.lowPointArc.toString());
+            }
+
+            Set<Node> forbiddenNodes = getForbidden(leftLow, rightLow, leftFork.lowPointArc, failedArc);
+            Arc leftHigh = searchPath(forbiddenNodes, leftLow.source, forkNode, rightLow.lowPoint, forkNode.height);
+            if (leftHigh == null) {
+                leftHigh = searchPath(forbiddenNodes, leftFork.lowPointArc.source, forkNode, rightLow.lowPoint, forkNode.height);
+            }
+            if (leftHigh != null) {
+                addNodesFromFunamentalCycle(forbiddenNodes, leftHigh);
+            }
+
+            Arc rightHigh = searchPath(forbiddenNodes, rightLow.source, forkNode, rightLow.lowPoint, forkNode.height);
+            if (rightHigh != null) {
+                addNodesFromFunamentalCycle(forbiddenNodes, rightHigh);
+            }
+
+            Arc neededArc = searchPath(forbiddenNodes, forkNode, -1, leftLow.lowPoint);
+            // TODO fix needed arc ending at leftLow.lowPoint
+            if (DEBUG) {
+                System.out.printf("Left high arc = %s\nNeeded arc: %s\nRight high arc = %s\n", String.valueOf(leftHigh), String.valueOf(neededArc), String.valueOf(rightHigh));
+            }
+
+            if (leftLow.endsHigherThan(rightLow)) {
+                if (DEBUG) {
+                    System.out.println("Simple case 1");
+                }
+                addFundamentalCycle(edges, leftLow, rightLow, leftFork.lowPointArc);
+            } else if (leftFork.lowPointArc != leftLow && rightFork.lowPointArc != rightLow) {
+                if (DEBUG) {
+                    System.out.println("Simple case 2");
+                }
+                assert leftFork.lowPoint == rightFork.lowPoint;
+                addFundamentalCycle(edges, leftLow, rightLow, leftFork.lowPointArc, rightFork.lowPointArc);
+                removePath(edges, leftLow.target, leftFork.lowPointArc.target);
+            } else if (neededArc != null && rightHigh != null) {
+                assert leftHigh != null;
+                addFundamentalCycle(edges, leftLow, rightHigh, leftHigh, rightHigh, neededArc);
+                removePath(edges, forkNode, highest(failedNode, leftHigh.target, rightHigh.target));
+                removePath(edges, lowest(failedNode, leftHigh.target, rightHigh.target), rightLow.target);
+            } else {
+                assert leftHigh != null;
+                assert leftHigh.lowPoint > rightLow.lowPoint && leftHigh.lowPoint < forkNode.height;
+                if (leftHigh.lowPoint < failedArcSource.source.height) {
+                    // case 7.1
+                    if (DEBUG)
+                        System.out.println("Case 7.1");
+                    addFundamentalCycle(edges, leftFork.lowPointArc);
+                    addFundamentalCycle(edges, leftHigh);
+                    addFundamentalCycle(edges, rightLow);
+                } else if (neededArc == null) {
+                    assert leftFork.lowPointArc != leftLow;
+                    // case 7.2
+                    addFundamentalCycle(edges, leftLow);
+                    addFundamentalCycle(edges, rightLow);
+                    addFundamentalCycle(edges, leftHigh);
+
+                    Node lowHighFork = forkNode(leftLow, leftHigh);
+                    Set<Node> forbidden = getForbidden(leftLow, leftHigh, rightLow, failedArc); // note: no leftLow.lowPointArc
+                    Arc lowPointArc = searchPath(forbiddenNodes, lowHighFork.parentArc.source, forkNode, leftLow.lowPoint - 1, leftLow.lowPoint + 1);
+                    Node lowPointLowFork = forkNode(leftLow, lowPointArc);
+                    Node lowPointHighFork = forkNode(leftHigh, lowPointArc);
+                    if (!lowHighFork.isHigherThan(lowPointHighFork) && !lowHighFork.isHigherThan(lowPointLowFork)) {
+                        if (DEBUG)
+                            System.out.println("Extended 7.2 case");
+                        boolean fromLow = true;
+                        Arc forceArc = searchPath(forbidden, leftLow.source, lowHighFork.parentArc.source, leftHigh.lowPoint, lowHighFork.height);
+                        if (forceArc == null) {
+                            fromLow = false;
+                            forceArc = searchPath(forbiddenNodes, rightLow.source, lowHighFork, leftHigh.lowPoint, lowHighFork.height);
+                        }
+                        assert forceArc != null;
+                        // TODO fix immediate force
+                        addNodesFromFunamentalCycle(forbidden, forceArc);
+                        lowPointArc = searchPath(forbidden, forceArc.source, lowHighFork, -1, leftFork.lowPoint + 1);
+                        assert lowPointArc != null;
+                        assert lowPointArc.lowPoint == leftFork.lowPoint;
+                        addFundamentalCycle(edges, lowPointArc);
+                        addFundamentalCycle(edges, forceArc);
+                        if (leftLow.endsLowerThan(rightLow)) {
+                            Node forceLowPointFork = forkNode(lowPointArc, forceArc);
+                            if (fromLow) {
+                                // when from left low arc
+                                Node lowFork = forkNode(leftLow, lowPointArc);
+                                removePath(edges, forceLowPointFork, lowFork);
+                            } else {
+                                // when from left high arc
+                                Node highFork = forkNode(leftHigh, lowPointArc);
+                                removePath(edges, forceLowPointFork, highFork);
+                            }
+                            if (forceArc.endsHigherThan(forkNode)) {
+                                System.out.println("Case 7.2.1");
+                                removePath(edges, lowest(forkNode, leftHigh.target), rightLow.target);
+                            } else {
+                                System.out.println("Case 7.2.2");
+                                removePath(edges, forceArc.target, leftHigh.target);
+                            }
+                        } else {
+                            System.out.println("Case 7.2.3");
+                            removePath(edges, lowHighFork, forkNode);
+                            removePath(edges, lowest(failedNode, leftHigh.target), leftLow.target);
+                        }
+                    } else {
+                        if (DEBUG)
+                            System.out.println("Case 7.2");
+                        addFundamentalCycle(edges, leftFork.lowPointArc);
+                        removePath(edges, failedArcSource.source, rightLow.target);
+                    }
+                } else if (leftLow.lowPoint == rightLow.lowPoint) {
+                    if (leftHigh.lowPoint > failedArcSource.source.height) {
+                        int[] heights = {neededArc.lowPoint, leftFork.lowPoint, failedArc.lowPoint};
+                        Arrays.sort(heights);
+                        if (heights[1] == heights[2]) {
+                            // case 1.1
+                            if (DEBUG)
+                                System.out.println("Case 1.1");
+                            addFundamentalCycle(edges, leftHigh);
+                            addFundamentalCycle(edges, leftFork.lowPointArc);
+                            addFundamentalCycle(edges, rightLow);
+                            addFundamentalCycle(edges, leftLow);
+                            addFundamentalCycle(edges, neededArc);
+                            Node fork1 = forkNode(leftFork.lowPointArc, leftLow);
+                            Node fork2 = forkNode(leftFork.lowPointArc, leftHigh);
+                            Node high = fork1.height > fork2.height ? fork2 : fork1;
+                            removePath(edges, high, forkNode);
+                            removePath(edges, leftLow.target, leftFork.lowPointArc.target);
+                        } else if (neededArc.lowPoint > leftFork.lowPoint && neededArc.lowPoint > failedArc.lowPoint) {
+                            // case 1.2
+                            if (DEBUG)
+                                System.out.println("Case 1.2");
+                            addFundamentalCycle(edges, leftHigh);
+                            addFundamentalCycle(edges, leftFork.lowPointArc);
+                            addFundamentalCycle(edges, leftLow);
+                            addFundamentalCycle(edges, neededArc);
+                            Node fork1 = forkNode(leftFork.lowPointArc, leftLow);
+                            Node fork2 = forkNode(leftFork.lowPointArc, leftHigh);
+                            Node high = fork1.height > fork2.height ? fork2 : fork1;
+                            removePath(edges, high, forkNode);
+                            removePath(edges, failedArcSource.source, leftLow.target);
+                        } else {
+                            // case 1.3
+                            if (DEBUG)
+                                System.out.println("Case 1.3");
+                            addFundamentalCycle(edges, leftHigh);
+                            addFundamentalCycle(edges, leftFork.lowPointArc);
+                            addFundamentalCycle(edges, rightLow);
+                            addFundamentalCycle(edges, neededArc);
+                            Node fork1 = forkNode(leftFork.lowPointArc, leftLow);
+                            Node fork2 = forkNode(leftFork.lowPointArc, leftHigh);
+                            Node high = fork1.height > fork2.height ? fork2 : fork1;
+                            removePath(edges, high, forkNode);
+                        }
+                    } else if (leftHigh.lowPoint == failedArcSource.source.height) {
+                        int[] heights = {neededArc.lowPoint, leftFork.lowPoint, failedArc.lowPoint};
+                        Arrays.sort(heights);
+                        if (heights[1] == heights[2]) {
+                            // case 2.1
+                            Node lowHighFork = forkNode(leftLow, leftHigh);
+                            Node lowPointLowFork = forkNode(leftLow, leftFork.lowPointArc);
+                            Node lowPointHighFork = forkNode(leftHigh, leftFork.lowPointArc);
+                            if (lowHighFork.height == lowPointLowFork.height && lowPointLowFork.height == lowPointHighFork.height) {
+                                // case 2.1.1
+                                // extracting K_5
+                                if (DEBUG)
+                                    System.out.println("Case 2.1.1");
+                                addFundamentalCycle(edges, leftHigh);
+                                addFundamentalCycle(edges, leftFork.lowPointArc);
+                                addFundamentalCycle(edges, rightLow);
+                                addFundamentalCycle(edges, leftLow);
+                                addFundamentalCycle(edges, neededArc);
+                            } else if (lowPointLowFork.height > lowPointHighFork.height) {
+                                // case 2.1.2
+                                if (DEBUG)
+                                    System.out.println("Case 2.1.2");
+                                assert lowPointLowFork.height > lowHighFork.height;
+                                addFundamentalCycle(edges, leftHigh);
+                                addFundamentalCycle(edges, leftFork.lowPointArc);
+                                addFundamentalCycle(edges, rightLow);
+                                addFundamentalCycle(edges, leftLow);
+                                addFundamentalCycle(edges, neededArc);
+                                removePath(edges, leftLow.target, leftFork.lowPointArc.target);
+                                removePath(edges, forkNode, leftHigh.target);
+                            } else if (lowHighFork.height > lowPointHighFork.height) {
+                                // case 2.1.3
+                                if (DEBUG)
+                                    System.out.println("Case 2.1.3");
+                                assert lowHighFork.height > lowPointLowFork.height;
+                                addFundamentalCycle(edges, leftHigh);
+                                addFundamentalCycle(edges, leftFork.lowPointArc);
+                                addFundamentalCycle(edges, rightLow);
+                                addFundamentalCycle(edges, leftLow);
+                                removePath(edges, leftHigh.target, leftLow.target);
+                            } else {
+                                // case 2.1.4
+                                if (DEBUG)
+                                    System.out.println("Case 2.1.4");
+                                assert lowPointLowFork.height > lowHighFork.height;
+                                assert lowPointLowFork.height > lowPointLowFork.height;
+                                addFundamentalCycle(edges, leftHigh);
+                                addFundamentalCycle(edges, leftFork.lowPointArc);
+                                addFundamentalCycle(edges, leftLow);
+                                addFundamentalCycle(edges, neededArc);
+                                removeFundamentalCycle(edges, failedArc);
+                            }
+                        } else if (neededArc.lowPoint > leftFork.lowPoint && neededArc.lowPoint > failedArc.lowPoint) {
+                            // case 2.2
+                            if (DEBUG)
+                                System.out.println("Case 2.2");
+                            addFundamentalCycle(edges, leftLow);
+                            addFundamentalCycle(edges, leftFork.lowPointArc);
+                            addFundamentalCycle(edges, neededArc);
+                        } else {
+                            // case 2.3
+                            if (DEBUG)
+                                System.out.println("Case 2.3");
+                            addFundamentalCycle(edges, leftHigh);
+                            addFundamentalCycle(edges, leftFork.lowPointArc);
+                            addFundamentalCycle(edges, neededArc);
+                            addFundamentalCycle(edges, rightLow);
+                            removePath(edges, forkNode, leftLow.target);
+                        }
+                    } else {
+                        // leftHigh.lowPoint < failedArcSource.source.height
+                        addFundamentalCycle(edges, leftHigh);
+                        addFundamentalCycle(edges, rightLow);
+                        if (leftFork.lowPointArc == leftLow) {
+                            // case 3.1
+                            if (DEBUG)
+                                System.out.println("Case 3.1");
+                            addFundamentalCycle(edges, neededArc);
+                        } else {
+                            // case 3.2
+                            if (DEBUG)
+                                System.out.println("Case 3.2");
+                            addFundamentalCycle(edges, leftFork.lowPointArc);
+                        }
+                    }
+                } else {
+                    if (leftHigh.lowPoint < failedArcSource.source.height) {
+                        // case 4.1
+                        if (DEBUG)
+                            System.out.println("Case 4.1");
+                        addFundamentalCycle(edges, leftLow);
+                        addFundamentalCycle(edges, leftHigh);
+                        addFundamentalCycle(edges, rightLow);
+                    } else if (leftHigh.lowPoint == failedArcSource.source.height) {
+                        // case 5.2
+                        if (DEBUG)
+                            System.out.println("Case 5.2");
+                        addFundamentalCycle(edges, leftLow);
+                        addFundamentalCycle(edges, leftHigh);
+                        addFundamentalCycle(edges, rightLow);
+                        addFundamentalCycle(edges, neededArc);
+                        removePath(edges, forkNode, leftHigh.target);
+                    } else {
+                        // case 6.2
+                        if (DEBUG)
+                            System.out.println("Case 6.2");
+                        addFundamentalCycle(edges, leftLow);
+                        addFundamentalCycle(edges, leftHigh);
+                        addFundamentalCycle(edges, rightLow);
+                        addFundamentalCycle(edges, neededArc);
+                        Node lowHighForkNode = forkNode(leftLow, leftHigh);
+                        removePath(edges, lowHighForkNode, forkNode);
+                    }
+                }
+            }
+
+
+        }
+        Set<Integer> vertexSubset = new HashSet<>();
+        Set<DefaultEdge> edgeSubset = new HashSet<>();
+        edges.forEach(a -> {
+            edgeSubset.add(a.graphEdge);
+            vertexSubset.add(a.source.graphVertex);
+            vertexSubset.add(a.target.graphVertex);
+        });
+        subdivision = new AsSubgraph<>(graph, vertexSubset, edgeSubset);
+        assert isKuratowskiSubdivision(subdivision);
+        if (DEBUG)
+            System.out.println("Is Kuratowski subdivision: true");
+    }
+
+    private Arc findArc(int low, int high, Node current) {
+        for (Arc arc : current.arcs) {
+            if (arc.isTreeArc()) {
+                Arc res = findArc(low, high, arc.target);
+                if (res != null) {
+                    return res;
+                }
+            } else if (arc.target.height > low && arc.target.height < high) {
+                return arc;
+            }
+        }
+        return null;
     }
 
     private boolean addConstraintsForArc(Arc currentArc, Arc parent) {
@@ -506,7 +945,6 @@ public class LeftRightPlanarityInspector<V, E> implements PlanarityTestingAlgori
             System.out.printf("Adding constraints for arc: %s\n\n", currentArc.toString());
             System.out.println("Stack bottom: " + currentArc.stackBottom);
             printStack();
-
         }
         ConflictPair merged = new ConflictPair();
 
@@ -517,8 +955,11 @@ public class LeftRightPlanarityInspector<V, E> implements PlanarityTestingAlgori
                 currentPair.swap();
             }
             if (!currentPair.left.isEmpty()) {
-                System.out.println("Top conflict pair:");
-                System.out.println(currentPair);
+                if (DEBUG) {
+                    System.out.println("Top conflict pair:");
+                    System.out.println(currentPair);
+                }
+                extractKuratowskiSubdivision(currentPair, currentArc.source.arcs.get(0), false);
                 return false; // graph is not planar
             }
             if (currentPair.right.low.lowPoint > parent.lowPoint) {
@@ -555,8 +996,10 @@ public class LeftRightPlanarityInspector<V, E> implements PlanarityTestingAlgori
                 }
             }
             if (conflicting(currentPair.right, currentArc)) {
-                System.out.println("Top conflict pair:");
-                System.out.println(currentPair);
+                if (DEBUG) {
+                    System.out.println("Top conflict pair:");
+                    System.out.println(currentPair);
+                }
                 return false; // graph is not planar
             }
             merged.right.low.ref = currentPair.right.high;
@@ -673,18 +1116,26 @@ public class LeftRightPlanarityInspector<V, E> implements PlanarityTestingAlgori
 
     private class Node {
         Arc parentArc;
-        V graphVertex;
+        Integer graphVertex;
         List<Arc> arcs;
-        List<E> embedded;
+        List<DefaultEdge> embedded;
         int height;
         Arc leftRef;
         Arc rightRef;
 
-        Node(V graphVertex, int degree) {
+        Node(Integer graphVertex, int degree) {
             this.graphVertex = graphVertex;
             this.arcs = new ArrayList<>();
             this.embedded = new ArrayList<>(degree);
             this.height = -1;
+        }
+
+        boolean isHigherThan(Node node) {
+            return height > node.height;
+        }
+
+        boolean isLowerThan(Node node) {
+            return height < node.height;
         }
 
         @Override
@@ -708,7 +1159,7 @@ public class LeftRightPlanarityInspector<V, E> implements PlanarityTestingAlgori
 
     private class Arc {
         int side;
-        E graphEdge;
+        DefaultEdge graphEdge;
         Node source;
         Node target;
         int lowPoint;
@@ -719,7 +1170,7 @@ public class LeftRightPlanarityInspector<V, E> implements PlanarityTestingAlgori
         Arc lowPointArc;
         ConflictPair stackBottom;
 
-        Arc(E graphEdge, Node source, Node target) {
+        Arc(DefaultEdge graphEdge, Node source, Node target) {
             this.graphEdge = graphEdge;
             this.source = source;
             this.target = target;
@@ -727,12 +1178,41 @@ public class LeftRightPlanarityInspector<V, E> implements PlanarityTestingAlgori
             lowPoint = lowPoint2 = -1;
         }
 
+        public Arc(DefaultEdge graphEdge, Node source, Node target, int lowPoint, int lowPoint2, int nestingDepth) {
+            this.graphEdge = graphEdge;
+            this.source = source;
+            this.target = target;
+            this.lowPoint = lowPoint;
+            this.lowPoint2 = lowPoint2;
+            this.nestingDepth = nestingDepth;
+        }
+
+        boolean endsHigherThan(Arc arc) {
+            return lowPointArc.target.isHigherThan(arc.lowPointArc.target);
+        }
+
+        boolean endsLowerThan(Arc arc) {
+            return lowPointArc.target.isLowerThan(arc.lowPointArc.target);
+        }
+
+        boolean endsHigherThan(Node node) {
+            return lowPointArc.target.isHigherThan(node);
+        }
+
+        boolean endsLowerThan(Node node) {
+            return lowPointArc.target.isLowerThan(node);
+        }
+
         public String toString(boolean full) {
             String res = toString();
             if (full) {
-                res += String.format(": lowpoint = %d, lowpoint2 = %d, nesting_depth = %d, side = %d, ref = %s", lowPoint, lowPoint2, nestingDepth, side, String.valueOf(ref));
+                res += String.format(": lowpoint = %d, lowpoint2 = %d, nesting_depth = %d, side = %d, ref = %s, low pt. arc = %s", lowPoint, lowPoint2, nestingDepth, side, String.valueOf(ref), String.valueOf(lowPointArc));
             }
             return res;
+        }
+
+        public boolean isTreeArc() {
+            return this == target.parentArc;
         }
 
         @Override
