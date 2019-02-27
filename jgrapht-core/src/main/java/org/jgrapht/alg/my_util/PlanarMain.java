@@ -12,6 +12,7 @@ import java.io.InputStreamReader;
 import java.util.Random;
 
 
+
 public class PlanarMain {
     public static void main(String[] args) {
 //        testKuratowski(8, 10000);
